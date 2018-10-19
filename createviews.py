@@ -25,8 +25,18 @@ table_ref = dataset_ref.table(table_name)
 table = client.get_table(table_ref)
 table_schema = table.schema
 
+def unpack_table_schema(table_schema):
+	"""Convert table schema to list of python dicts."""
+	fields = []
+	for SchemaField in table_schema:
+		field_dict = SchemaField.to_api_repr()
+		fields.append(field_dict)
+	return fields
+
+fields = unpack_table_schema(table_schema)
+
 # TODO: Algorithm parses table schema.
-def parse_table_schema(table_schema):
+def parse_table_schema(fields):
 	"""Parse table schema and return values."""
 
 	# Create list for statements used for writing SQL query.
@@ -39,11 +49,11 @@ def parse_table_schema(table_schema):
 		field_name_unicode = field_dict['name']
 		field_name = field_name_unicode.encode('ascii')
 		print(field_name)
-		field_type_unicode = field_dict['type']
-		field_type = field_type_unicode.encode('ascii')
-		print(field_type)
+		field_mode_unicode = field_dict['mode']
+		field_mode = field_mode_unicode.encode('ascii')
+		print(field_mode)
 		# Unnest fields with type 'record'.
-		if field_type == 'RECORD':
+		if field_mode == 'REPEATED':
 			print('is stinky')
 			parent = field_name
 			print(parent)
