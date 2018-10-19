@@ -36,47 +36,76 @@ def unpack_table_schema(table_schema):
 fields = unpack_table_schema(table_schema)
 
 # TODO: Algorithm parses table schema.
-def parse_table_schema(fields):
+def parse_table_schema(fields, table='', select_statement=[]):
 	"""Parse table schema and return values."""
-
-	# Create list for statements used for writing SQL query.
-	select_statement = []
-	unnest_statement = []
 	
-	# Loop through schema and identify field type and name.
-	for SchemaField in table_schema:
-		field_dict = SchemaField.to_api_repr()
-		field_name_unicode = field_dict['name']
+	# Loop through fields and identify repeated fields
+	for field in fields:
+		field_type = field['type']
+		field_mode = field['mode']
+		#print(field_mode)
+		field_name_unicode = field['name']
 		field_name = field_name_unicode.encode('ascii')
-		print(field_name)
-		field_mode_unicode = field_dict['mode']
-		field_mode = field_mode_unicode.encode('ascii')
-		print(field_mode)
-		# Unnest fields with type 'record'.
-		if field_mode == 'REPEATED':
-			print('is stinky')
+		#print(field_name)
+		if field_mode != u'REPEATED':
+			select_statement.append(table + '.' + field_name)
+		elif field_mode != u'REPEATED' and field_type == u'RECORD':
 			parent = field_name
-			print(parent)
-			unnest_statement.append(parent)
-			nested_fields = field_dict['fields']
-			type(nested_fields)
-			# Create select statements for each nested field.
-			for field in nested_fields:
-				child_unicode = field['name']
-				child = child_unicode.encode('ascii')
-				column_name = '{}.{}'.format(parent,child)
-				column_alias = '{}_{}'.format(parent,child)
-				select_statement_line = '{} AS {}'.format(column_name,column_alias)
-				print(select_statement_line)
-				# Append select statement
-				select_statement.append(select_statement_line)
-		# Append non-nested field select statement
+			for field in field['fields']:
+				field_name_unicode = field['name']
+				field_name = field_name_unicode.encode('ascii')
+				select_statement.append(parent + '.' + field_name)
 		else:
-			select_statement.append(field_name)
+			# How do I deal with parent field name?
+			#print(table)
+			if field['type'] != u'RECORD':
+				select_statement.append('R' + table + '.' + field_name)
+			else:
+				table = table + '.' + field_name
+				fields = field['fields']
+				#print(fields)
+				#print(select_statement)
+				select_statement += parse_table_schema(fields, table, [])
+				table = ''
 
-	return select_statement, unnest_statement
 
-print(parse_table_schema(table_schema))	
+	return select_statement
+
+
+result = parse_table_schema(fields)
+print(result)
+
+
+			#v, j = parse_table_schema(field)
+			
+
+
+
+
+
+#			print('is stinky')
+#			parent = field_name
+#			print(parent)
+#			unnest_statement.append(parent)
+#			nested_fields = field_dict['fields']
+#			type(nested_fields)
+#			# Create select statements for each nested field.
+#			for field in nested_fields:
+#				child_unicode = field['name']
+#				child = child_unicode.encode('ascii')
+#				column_name = '{}.{}'.format(parent,child)
+#				column_alias = '{}_{}'.format(parent,child)
+#				select_statement_line = '{} AS {}'.format(column_name,column_alias)
+#				print(select_statement_line)
+#				# Append select statement
+#				select_statement.append(select_statement_line)
+#		# Append non-nested field select statement
+#		else:
+#			select_statement.append(field_name)
+#
+#	return select_statement, unnest_statement
+#
+#print(parse_table_schema(table_schema))	
 			
 ## TODO: Algorithm to write SQL query.
 #def write_query():
