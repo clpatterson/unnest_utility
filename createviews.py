@@ -7,6 +7,7 @@ to flatten the table, executes the query in BQ, then saves the view.
 
 """
 
+import re
 from google.cloud import bigquery
 from google.cloud.bigquery.schema import SchemaField
 
@@ -50,7 +51,8 @@ def parse_table_schema(fields, table='', select_statement=[]):
 			for field in field['fields']:
 				field_name_unicode = field['name']
 				field_name = field_name_unicode.encode('ascii')
-				select_statement.append(parent + '.' + field_name)
+				# TODO: Flag these fields appropriately
+				select_statement.append(parent + '.' + field_name + '_RECORD')
 		# Add non-repeated fields.
 		elif field_mode != u'REPEATED':
 			select_statement.append(table + '.' + field_name)
@@ -58,6 +60,7 @@ def parse_table_schema(fields, table='', select_statement=[]):
 			# Add repeated non-record fields 
 			if field['type'] != u'RECORD':
 				field_type = field_type.encode('ascii')
+				# TODO: Flag these fields appropriately
 				select_statement.append(table + '.' + field_name + 'R_' + field_type)
 			# Unpack repeated record fields
 			else:
@@ -68,10 +71,10 @@ def parse_table_schema(fields, table='', select_statement=[]):
 	return select_statement
 
 fields = parse_table_schema(fields)
-for item in fields:
-	print(item)		
 
+# TOD0: Test parse_table_schema function with triple nested schema.	
 def clean_fields(fields):
+	"""Remove '.' from beginning of field names."""
 	clean_fields = []
 	for field in fields:
 		if field[0] is '.':
@@ -80,28 +83,68 @@ def clean_fields(fields):
 			clean_fields.append(field)
 	return clean_fields
 
-print (clean_fields(fields))
+fields = clean_fields(fields)
+
+def write_select_clause(fields):
+	"""Format fields for select clause of SQL query."""
+	select = []
+	for field in fields:
+		if '_RECORD' in field:
+			field = field[:-7]
+		if 'R_' in field:
+			field = field.split('R')
+			field = field[0]
+		if '.' in field:
+			alias = re.sub(r'\.', '_', field)
+			select.append(field + ' AS ' + alias + ',')
+		else:
+			select.append(field + ',')
+	short_select = select[:-1]
+	last_column = select[-1][:-1]
+	short_select.append(last_column)
+	select = short_select
+	
+	return select
+
+select = write_select_clause(fields)
+
+def write_table_path(project_name, dataset_name, table_name):
+	bq_table_path = '{0}.{1}.{2}'.format(project_name,
+		dataset_name,
+		table_name)
+	return bq_table_path
+
+bq_table_path = write_table_path(project_name, dataset_name, table_name)
+
+def write_from_clause(bq_table_path, fields):
+	# Cycle through fields and find columns to unnest
+	unnest = []
+	for field in fields:
+		if '_RECORD' in field:
+			pass
+		elif '.' in field:
+			index = [pos for pos, char in enumerate(field) if char == '.']
+			for value in index:
+				need_unnest = field[:value]
+				unnest.append(need_unnest)
+	unnest = sorted(set(unnest))
+	return unnest
+
+from_clause = write_from_clause(bq_table_path, fields)
 
 ### TODO: Algorithm to write SQL query.
-#def write_top_level_query():
+#def assemble_top_level_query():
 #	"""Write SQL query from table schema."""
 #
-#	# TODO: Add commas to select statements (last item has no comma after)
-#	# TODO: Add UNNEST() to unnest statements
-#	# TODO: Add commas to unnest statements.
-#	#   First item has needs comma space at front. Last item has 
-#	#   no comma after.
-#
-#	# Create basic SQL query template.
-#	bq_table_path = '{0}.{1}.{2}'.format(project_name,
-#		dataset_name,
-#		table_name)
 #	
 #	query = 'SELECT {0} FROM `{1}`{2};'.format(
 #		select_statement,
 #		bq_table_path,
 #		unnest_statement)
-#
-## TODO: Execute query.
-## TODO: Save query as view.
-## TODO: Close connection.
+
+# TODO: Add commas to select statements (last item has no comma after)
+# TODO: Add UNNEST() to unnest statements
+# TODO: Add commas to unnest statements.
+# TODO: Execute query.
+# TODO: Save query as view.
+# TODO: Close connection.
