@@ -87,7 +87,7 @@ fields = clean_fields(fields)
 
 def write_select_clause(fields):
 	"""Format fields for select clause of SQL query."""
-	select = []
+	select_string = ''
 	for field in fields:
 		if '_RECORD' in field:
 			field = field[:-7]
@@ -96,17 +96,15 @@ def write_select_clause(fields):
 			field = field[0]
 		if '.' in field:
 			alias = re.sub(r'\.', '_', field)
-			select.append(field + ' AS ' + alias + ',')
+			select_string = select_string + field + ' AS ' + alias + ', ' 
 		else:
-			select.append(field + ',')
-	short_select = select[:-1]
-	last_column = select[-1][:-1]
-	short_select.append(last_column)
-	select = short_select
+			select_string = select_string + field + ', '
+	select_string = select_string[:-2]
 	
-	return select
+	return select_string
 
 select = write_select_clause(fields)
+
 
 def write_table_path(project_name, dataset_name, table_name):
 	bq_table_path = '{0}.{1}.{2}'.format(project_name,
@@ -126,21 +124,38 @@ def write_from_clause(bq_table_path, fields):
 			index = [pos for pos, char in enumerate(field) if char == '.']
 			for value in index:
 				need_unnest = field[:value]
+				need_unnest = 'UNNEST({})'.format(need_unnest)
 				unnest.append(need_unnest)
+	
 	unnest = sorted(set(unnest))
-	return unnest
+	unnest_string = ''
+	for field in unnest:
+		unnest_string = unnest_string + field + ', '
+	unnest_string = unnest_string[:-2]
+	
+	return unnest_string
 
-from_clause = write_from_clause(bq_table_path, fields)
+unnest_clause = write_from_clause(bq_table_path, fields)
 
-### TODO: Algorithm to write SQL query.
-#def assemble_top_level_query():
-#	"""Write SQL query from table schema."""
-#
-#	
-#	query = 'SELECT {0} FROM `{1}`{2};'.format(
-#		select_statement,
-#		bq_table_path,
-#		unnest_statement)
+
+# TODO: Algorithm to write SQL query.
+def assemble_top_level_query(select, bq_table_path, unnest_clause):
+	"""Write SQL query from clauses."""
+	if len(unnest_clause) is not 0:
+		comma = ','
+	else:
+		comma = ''
+
+	query = 'SELECT {0} FROM `{1}`{2}{3};'.format(
+		select,
+		bq_table_path,
+		comma,
+		unnest_clause)
+	
+	return query
+
+query = assemble_top_level_query(select,bq_table_path,unnest_clause)
+print(query)
 
 # TODO: Add commas to select statements (last item has no comma after)
 # TODO: Add UNNEST() to unnest statements
