@@ -79,26 +79,29 @@ def parse_table_schema(fields, table='', views=[]):
 				table = ''
 		# Add non-repeated fields.
 		elif field_mode != u'REPEATED':
-			table = table
+			view_name = table
 			field_name = table + '.' + field_name
 			# Check to if record key exits
 			try:
 				record = field['record']
 			except KeyError:
 				views.append({
-					'view_names':table, 
+					'view_names':view_name, 
 					'field_name':field_name
 					})
 			else:
+				# prevent record from appearing as view_name
+				if record in table:
+					view_name = re.sub(record, '', table)
 				views.append({
-					'view_names':table, 
+					'view_names':view_name, 
 					'field_name':field_name, 
 					'record': record
 					})
 		else:
 			# Add repeated non-record fields 
 			if field['type'] != u'RECORD':
-				table = table
+				view_name = table
 				field_name = table + '.' + field_name
 				method = 'ARRAY_LENGTH({})'.format(field_name)
 				# Check to if record key exits
@@ -106,12 +109,15 @@ def parse_table_schema(fields, table='', views=[]):
 					record = field['record']
 				except KeyError:
 					views.append({
-						'view_names':table, 
+						'view_names':view_name, 
 						'field_name':field_name, 
 						'method':method
 						})
 				else:
-					views.append({'view_names':table, 
+					# prevent record from appearing as view_name
+					if record in table:
+						view_name = re.sub(record, '', table)
+					views.append({'view_names':view_name, 
 						'field_name':field_name, 
 						'method':method, 
 						'record': record})
@@ -134,21 +140,7 @@ fields = parse_table_schema(fields)
 for field in fields:
 	print(field)
 
-## TOD0: Test parse_table_schema function with triple nested schema.	
-#def clean_fields(fields):
-#	"""Remove '.' from beginning of field names."""
-#	clean_fields = []
-#	for field in fields:
-#		if field[0] is '.':
-#			clean_fields.append(field[1:])
-#		else:
-#			clean_fields.append(field)
-#	return clean_fields
-#
-#fields = clean_fields(fields)
-##for field in fields:
-##	print(field)
-#
+
 ## TODO: Determine which views to create.
 #def views_planning(fields):
 #	view_name = []
@@ -161,7 +153,7 @@ for field in fields:
 #	return views
 #
 #print(views_planning(fields))
-#
+
 
 #def write_select_clause(fields):
 #	"""Format fields for select clause of SQL query."""
