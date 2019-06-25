@@ -7,7 +7,7 @@ to flatten the table, executes the query in BQ, then saves the view.
 
 """
 
-import os,re
+import os,re,json
 from google.cloud import bigquery
 from google.cloud.bigquery.schema import SchemaField
 
@@ -17,8 +17,8 @@ from google.cloud.bigquery.schema import SchemaField
 
 # Set credentials
 # NOTE: must be changed by user to reflect correct file path.
-os.environ['GOOGLE_APPLICATION_CREDENTIALS']="/Users/Work/Desktop/\
-scripting/gcp/bq/service_account/service_account.json"
+os.environ['GOOGLE_APPLICATION_CREDENTIALS']="/Users/charliepatterson/Documents/\
+mhi_programs/bq-create-views-repo/service_account/service_account.json"
 
 # Connect to a project.
 project_name = 'cool-academy-217719'
@@ -29,13 +29,14 @@ dataset_name = 'create_views_test'
 dataset_ref = client.dataset(dataset_name) # TODO: store dataset name in variable.
 
 # Get schema for a table and pass list into a variable.
-table_name = 'products_copy'
+table_name = 'products'
 table_ref = dataset_ref.table(table_name)
 table = client.get_table(table_ref)
 table_schema = table.schema
 
 # Define primary key
 primary_key = '_id'
+primary_key = primary_key.encode()
 
 def unpack_table_schema(table_schema):
 	"""Convert table schema to list of python dicts."""
@@ -46,99 +47,177 @@ def unpack_table_schema(table_schema):
 	return fields
 
 fields = unpack_table_schema(table_schema)
+#print(json.dumps(fields, sort_keys=True, indent=4))
 
 # Algorithm parses table schema.
-def parse_table_schema(fields, table='', views=[]):
-	"""Parse schema, track lineage, and return list of fields."""
-	
+def parse_table_schema(fields, table=u'', new_fields=[]):
+	"""Add a table name that reflects parentage to each field."""
 	for field in fields:
-		field_type = field['type']
-		field_mode = field['mode']
-		field_name_unicode = field['name']
-		field_name = field_name_unicode.encode('ascii')
-		# Take out primary key
-		if field_name is primary_key:
+		# Don't add table name to primary_key.
+		if field['name'] is primary_key:
 			pass
-		# Add record fields.
-		if field_mode != u'REPEATED' and field_type == u'RECORD':
-			if not table == '':
-				table = table + '.' + field_name
+		if field['mode'] != u'REPEATED' and field['type'] == u'RECORD': # Handle nullable records.
+			if table != u'': # If we are at at nested level, this is true. 
+				field['table_name'] = table + u'.' + field['name']
+				print(field['table_name'] + u'- nullable record')
 				fields = field['fields']
-				# Add records flag
-				for field in fields:
-					field['record'] = table
-				views += parse_table_schema(fields, table, [])
-				table = ''
-			else:
-				table = field_name
+				new_fields += parse_table_schema(fields, field['table_name'], [])
+				table = u''
+			else: # If we are at the top level, this is true.
+				field['table_name'] = field['name']
+				print(field['table_name'] + u'- nullable record')
 				fields = field['fields']
-				# Add records flag
-				for field in fields:
-					field['record'] = table
-				views += parse_table_schema(fields, table, [])
-				table = ''
-		# Add non-repeated fields.
-		elif field_mode != u'REPEATED':
-			view_name = table
-			field_name = table + '.' + field_name
-			# Check to if record key exits
-			try:
-				record = field['record']
-			except KeyError:
-				views.append({
-					'view_names':view_name, 
-					'field_name':field_name
-					})
-			else:
-				# prevent record from appearing as view_name
-				if record in table:
-					view_name = re.sub(record, '', table)
-				views.append({
-					'view_names':view_name, 
-					'field_name':field_name, 
-					'record': record
-					})
+				new_fields += parse_table_schema(fields, field['table_name'], [])
+				table = u''
+		elif field['mode'] != u'REPEATED': # Handle nullable fields.
+			field['table_name'] = table
+			print(field['table_name'] + u'- nullable field')
+			new_fields.append(field)
 		else:
 			# Add repeated non-record fields 
-			if field['type'] != u'RECORD':
-				view_name = table
-				field_name = table + '.' + field_name
-				method = 'ARRAY_LENGTH({})'.format(field_name)
-				# Check to if record key exits
-				try:
-					record = field['record']
-				except KeyError:
-					views.append({
-						'view_names':view_name, 
-						'field_name':field_name, 
-						'method':method
-						})
-				else:
-					# prevent record from appearing as view_name
-					if record in table:
-						view_name = re.sub(record, '', table)
-					views.append({'view_names':view_name, 
-						'field_name':field_name, 
-						'method':method, 
-						'record': record})
-			# Unpack repeated record fields
-			else:
-				if not table == '':
-					table = table + '.' + field_name
+			if field['type'] != u'RECORD' and field['mode'] == u'REPEATED': # Handle repeated fields.
+				field['table_name'] = table
+				print(field['table_name'] + u'- repeated field')
+				new_fields.append(field)
+			else: # Handle repeated records.
+				if table != u'': # If we are at at nested level, this is true. 
+					field['table_name'] = table + u'.' + field['name']
+					print(field['table_name'] + u'- repeated record')
 					fields = field['fields']
-					views += parse_table_schema(fields, table, [])
-					table = ''
-				else:
-					table = field_name
+					new_fields += parse_table_schema(fields, field['table_name'], [])
+					table = u''
+				else: # If we are at the top level, this is true.
+					field['table_name'] = field['name']
+					print(field['table_name'] + u'- repeated record')
 					fields = field['fields']
-					views += parse_table_schema(fields, table, [])
-					table = ''
+					new_fields += parse_table_schema(fields, field['table_name'], [])
+					table = u''
+	return new_fields
 
-	return views
 
-fields = parse_table_schema(fields)
-for field in fields:
-	print(field)
+
+fieldss = parse_table_schema(fields)
+print(json.dumps(fieldss, sort_keys=True, indent=4))
+
+		
+#
+#
+#
+#		# Do not assign table name to primary_key
+#		if field_name is primary_key:
+#			pass
+#		# Assign table name to nullable records.
+#		if field_mode != u'REPEATED' and field_type == u'RECORD':
+#			# Check if table as already been assigned.
+#			if not table == '':
+#			# Assign 
+#			else:
+#				table = field_name
+#
+#
+#			# Assign table names to fields that are nullable.
+#		elif field_mode != u'REPEATED':
+#
+#		else:
+#			# Assign table names to repeated, non-record fields.
+#			if field['type'] != u'RECORD':
+#			# Pass repeated record fields back for parsing.
+#			else:
+#
+#
+#
+#
+## Algorithm parses table schema.
+#def parse_table_schema(fields, table='', views=[]):
+#	"""Parse schema, track lineage, and return list of fields."""
+#	
+#	for field in fields:
+#		field_type = field['type']
+#		field_mode = field['mode']
+#		field_name_unicode = field['name']
+#		field_name = field_name_unicode.encode('ascii')
+#		# Take out primary key
+#		if field_name is primary_key:
+#			pass
+#		# Add record fields.
+#		if field_mode != u'REPEATED' and field_type == u'RECORD':
+#			if not table == '':
+#				table = table + '.' + field_name
+#				fields = field['fields']
+#				# Add records flag
+#				for field in fields:
+#					field['record'] = table
+#				views += parse_table_schema(fields, table, [])
+#				table = ''
+#			else:
+#				table = field_name
+#				fields = field['fields']
+#				# Add records flag
+#				for field in fields:
+#					field['record'] = table
+#				views += parse_table_schema(fields, table, [])
+#				table = ''
+#		# Add non-repeated fields.
+#		elif field_mode != u'REPEATED':
+#			view_name = table
+#			field_name = table + '.' + field_name
+#			# Check to if record key exits
+#			try:
+#				record = field['record']
+#			except KeyError:
+#				views.append({
+#					'view_names':view_name, 
+#					'field_name':field_name
+#					})
+#			else:
+#				# prevent record from appearing as view_name
+#				if record in table:
+#					view_name = re.sub(record, '', table)
+#				views.append({
+#					'view_names':view_name, 
+#					'field_name':field_name, 
+#					'record': record
+#					})
+#		else:
+#			# Add repeated non-record fields 
+#			if field['type'] != u'RECORD':
+#				view_name = table
+#				field_name = table + '.' + field_name
+#				method = 'ARRAY_LENGTH({})'.format(field_name)
+#				# Check to if record key exits
+#				try:
+#					record = field['record']
+#				except KeyError:
+#					views.append({
+#						'view_names':view_name, 
+#						'field_name':field_name, 
+#						'method':method
+#						})
+#				else:
+#					# prevent record from appearing as view_name
+#					if record in table:
+#						view_name = re.sub(record, '', table)
+#					views.append({'view_names':view_name, 
+#						'field_name':field_name, 
+#						'method':method, 
+#						'record': record})
+#			# Unpack repeated record fields
+#			else:
+#				if not table == '':
+#					table = table + '.' + field_name
+#					fields = field['fields']
+#					views += parse_table_schema(fields, table, [])
+#					table = ''
+#				else:
+#					table = field_name
+#					fields = field['fields']
+#					views += parse_table_schema(fields, table, [])
+#					table = ''
+#
+#	return views
+#
+#parsed_fields_list = parse_table_schema(fields)
+#print(json.dumps(parsed_fields_list, sort_keys=True, indent=4))
 
 
 ## TODO: Determine which views to create.
