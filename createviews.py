@@ -38,7 +38,7 @@ table_schema = table.schema
 primary_key = '_id'
 primary_key = primary_key.encode()
 
-def unpack_table_schema(table_schema):
+def schema_to_dicts(table_schema):
 	"""Convert table schema to list of python dicts."""
 	fields = []
 	for SchemaField in table_schema:
@@ -46,58 +46,53 @@ def unpack_table_schema(table_schema):
 		fields.append(field_dict)
 	return fields
 
-fields = unpack_table_schema(table_schema)
+fields = schema_to_dicts(table_schema)
 #print(json.dumps(fields, sort_keys=True, indent=4))
 
-# Algorithm parses table schema.
-def parse_table_schema(fields, table=u'', new_fields=[]):
-	"""Add a table name that reflects parentage to each field."""
+def parse_table_schema(fields, table=table_name, new_fields=[]):
+	"""Add a table name that preserves parentage for each field."""
 	for field in fields:
-		# Don't add table name to primary_key.
-		if field['name'] is primary_key:
+		if field['name'] is primary_key: # Don't add table name to primary_key.
 			pass
 		if field['mode'] != u'REPEATED' and field['type'] == u'RECORD': # Handle nullable records.
-			if table != u'': # If we are at at nested level, this is true. 
-				field['table_name'] = table + u'.' + field['name']
-				print(field['table_name'] + u'- nullable record')
-				fields = field['fields']
-				new_fields += parse_table_schema(fields, field['table_name'], [])
-				table = u''
-			else: # If we are at the top level, this is true.
-				field['table_name'] = field['name']
-				print(field['table_name'] + u'- nullable record')
-				fields = field['fields']
-				new_fields += parse_table_schema(fields, field['table_name'], [])
-				table = u''
+			field['table_name'] = table + u'.' + field['name']
+			print(field['table_name'] + u'- nullable record')
+			fields = field['fields']
+			new_fields += parse_table_schema(fields, field['table_name'], [])
+			table = table_name
 		elif field['mode'] != u'REPEATED': # Handle nullable fields.
 			field['table_name'] = table
 			print(field['table_name'] + u'- nullable field')
 			new_fields.append(field)
 		else:
-			# Add repeated non-record fields 
 			if field['type'] != u'RECORD' and field['mode'] == u'REPEATED': # Handle repeated fields.
-				field['table_name'] = table
+				field['table_name'] = table + u'.' + field['name']
 				print(field['table_name'] + u'- repeated field')
 				new_fields.append(field)
 			else: # Handle repeated records.
-				if table != u'': # If we are at at nested level, this is true. 
-					field['table_name'] = table + u'.' + field['name']
-					print(field['table_name'] + u'- repeated record')
-					fields = field['fields']
-					new_fields += parse_table_schema(fields, field['table_name'], [])
-					table = u''
-				else: # If we are at the top level, this is true.
-					field['table_name'] = field['name']
-					print(field['table_name'] + u'- repeated record')
-					fields = field['fields']
-					new_fields += parse_table_schema(fields, field['table_name'], [])
-					table = u''
+				field['table_name'] = table + u'.' + field['name']
+				print(field['table_name'] + u'- repeated record')
+				fields = field['fields']
+				new_fields += parse_table_schema(fields, field['table_name'], [])
+				table = table_name
 	return new_fields
 
-
-
 fieldss = parse_table_schema(fields)
-print(json.dumps(fieldss, sort_keys=True, indent=4))
+#print(json.dumps(fieldss, sort_keys=True, indent=4))
+
+# TODO:
+def sort_fields(fields, table_dict={}):
+	"""Sort fields into tables."""
+	for field in fields:
+		if field['table_name'] not in table_dict.keys():
+			table_dict.update({field['table_name']:{'fields':[]}})
+			table_dict[field['table_name']]['fields'].append(field)
+		else:
+			table_dict[field['table_name']]['fields'].append(field)
+	return table_dict
+
+f = sort_fields(fieldss)
+print(json.dumps(f, sort_keys=True, indent=4))
 
 		
 #
