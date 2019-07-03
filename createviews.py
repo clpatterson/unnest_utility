@@ -36,9 +36,10 @@ table = client.get_table(table_ref)
 table_schema = table.schema
 table_name = table_name.encode()
 
-# Define primary key
+# Define primary key.
 primary_key = '_id'
 primary_key = primary_key.encode()
+
 
 def schema_to_dict(table_schema):
 	"""Convert table schema to list of python dicts."""
@@ -129,28 +130,55 @@ def  sql_select(table):
 		field_alias_prefix = table[0].split(".",1)
 		field_alias_prefix = field_alias_prefix[1].replace(".","_")
 	for f in fields:
-		field = table_alias + "." + f['name']
-		if table_alias is 'a':
-			field_alias = f['name']
+		if f['name'] == primary_key:
+			pass
 		else:
-			field_alias = field_alias_prefix + "_" + f['name']
-		field_clause = ", {} as {}".format(field,field_alias)
-		select_clause += field_clause
+			field = table_alias + "." + f['name']
+			if table_alias is 'a':
+				field_alias = f['name']
+			else:
+				field_alias = field_alias_prefix + "_" + f['name']
+			field_clause = ", {} as {}".format(field,field_alias)
+			select_clause += field_clause
 	return select_clause
 
 #print(sql_select(ttable) + " " + sql_from(ttable))
 
 def sql_query(table_dict):
 	"""Write sql queries for all my nested tables."""
-	queries = []
+	queries = {}
 	for table in table_dict.items():
 		sql_query = sql_select(table) + " " + sql_from(table)
-		queries.append(sql_query)
+		queries.update({table[0]:sql_query})
 	return queries
 
 tq = sql_query(f)
-for q in tq:
-	print(q)
+#for q in tq.items():
+#	print(q[0])
+
+def create_view(queries):
+	"""Create views for queries in the provided project and dataset."""
+	for query in queries.items():
+		print(query[0])
+		print(query[1])
+		view_name = "vw_" + query[0].replace('.',"_")
+		view_ref = dataset_ref.table(view_name)
+		view = bigquery.Table(view_ref)
+		view.view_query = query[1]
+		view = client.create_table(view)
+		print("Successfully created view at {}".format(view.full_table_id))
+		#view_query = "create or replace {} as {};".format(view_name,query[1])
+		#client.query(view_query)
+	return
+create_view(tq)
+
+
+
+
+# TODO: Save query as view.
+# TODO: Close connection.
+
+
 
 
 #		# Do not assign table name to primary_key
@@ -355,10 +383,3 @@ for q in tq:
 #
 #query = assemble_top_level_query(select,bq_table_path,unnest_clause)
 #print(query)
-
-# TODO: Add commas to select statements (last item has no comma after)
-# TODO: Add UNNEST() to unnest statements
-# TODO: Add commas to unnest statements.
-# TODO: Execute query.
-# TODO: Save query as view.
-# TODO: Close connection.
