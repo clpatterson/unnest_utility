@@ -123,16 +123,35 @@ def  sql_select(table):
 	fields = table[1]['fields']
 	select_clause = "select {}".format(primary_key)
 	table_alias = ascii_lowercase[len(table[0].split(".")) -1]
-	field_alias_prefix = table[0].split(".",1)
-	field_alias_prefix = field_alias_prefix[1].replace(".","_")
+	if table_alias is 'a':
+		pass
+	else:	
+		field_alias_prefix = table[0].split(".",1)
+		field_alias_prefix = field_alias_prefix[1].replace(".","_")
 	for f in fields:
 		field = table_alias + "." + f['name']
-		field_alias = field_alias_prefix + "_" + f['name']
+		if table_alias is 'a':
+			field_alias = f['name']
+		else:
+			field_alias = field_alias_prefix + "_" + f['name']
 		field_clause = ", {} as {}".format(field,field_alias)
 		select_clause += field_clause
 	return select_clause
 
-print(sql_select(ttable) + " " + sql_from(ttable))
+#print(sql_select(ttable) + " " + sql_from(ttable))
+
+def sql_query(table_dict):
+	"""Write sql queries for all my nested tables."""
+	queries = []
+	for table in table_dict.items():
+		sql_query = sql_select(table) + " " + sql_from(table)
+		queries.append(sql_query)
+	return queries
+
+tq = sql_query(f)
+for q in tq:
+	print(q)
+
 
 #		# Do not assign table name to primary_key
 #		if field_name is primary_key:
