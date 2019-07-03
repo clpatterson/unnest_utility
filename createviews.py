@@ -8,6 +8,7 @@ to flatten the table, executes the query in BQ, then saves the view.
 """
 
 import os,re,json
+from string import ascii_lowercase
 from google.cloud import bigquery
 from google.cloud.bigquery.schema import SchemaField
 
@@ -21,24 +22,25 @@ os.environ['GOOGLE_APPLICATION_CREDENTIALS']="/Users/charliepatterson/Documents/
 mhi_programs/bq-create-views-repo/service_account/service_account.json"
 
 # Connect to a project.
-project_name = 'cool-academy-217719'
-client = bigquery.Client(project=project_name)
+PROJECT_NAME = 'cool-academy-217719'
+client = bigquery.Client(project=PROJECT_NAME)
 
 # Connect to a dataset.
-dataset_name = 'create_views_test'
-dataset_ref = client.dataset(dataset_name) # TODO: store dataset name in variable.
+DATASET_NAME = 'create_views_test'
+dataset_ref = client.dataset(DATASET_NAME) # TODO: store dataset name in variable.
 
 # Get schema for a table and pass list into a variable.
 table_name = 'products'
 table_ref = dataset_ref.table(table_name)
 table = client.get_table(table_ref)
 table_schema = table.schema
+table_name = table_name.encode()
 
 # Define primary key
 primary_key = '_id'
 primary_key = primary_key.encode()
 
-def schema_to_dicts(table_schema):
+def schema_to_dict(table_schema):
 	"""Convert table schema to list of python dicts."""
 	fields = []
 	for SchemaField in table_schema:
@@ -46,38 +48,39 @@ def schema_to_dicts(table_schema):
 		fields.append(field_dict)
 	return fields
 
-fields = schema_to_dicts(table_schema)
+fields = schema_to_dict(table_schema)
 #print(json.dumps(fields, sort_keys=True, indent=4))
 
 def parse_table_schema(fields, table=table_name, new_fields=[]):
 	"""Add a table name that preserves parentage for each field."""
 	for field in fields:
-		if field['name'] is primary_key: # Don't add table name to primary_key.
+		if field['name'] == primary_key: # Don't add table name to primary_key.
 			pass
-		if field['mode'] != u'REPEATED' and field['type'] == u'RECORD': # Handle nullable records.
+		if field['mode'] != u'REPEATED' and field['type'] == u'RECORD': # Handle nullable records (structs).
 			field['table_name'] = table + u'.' + field['name']
-			print(field['table_name'] + u'- nullable record')
+			#print(field['table_name'] + u'- nullable record')
 			fields = field['fields']
 			new_fields += parse_table_schema(fields, field['table_name'], [])
 			table = table_name
 		elif field['mode'] != u'REPEATED': # Handle nullable fields.
 			field['table_name'] = table
-			print(field['table_name'] + u'- nullable field')
+			#print(field['table_name'] + u'- nullable field')
 			new_fields.append(field)
 		else:
-			if field['type'] != u'RECORD' and field['mode'] == u'REPEATED': # Handle repeated fields.
+			if field['type'] != u'RECORD' and field['mode'] == u'REPEATED': # Handle repeated fields (arrays).
 				field['table_name'] = table + u'.' + field['name']
-				print(field['table_name'] + u'- repeated field')
+				#print(field['table_name'] + u'- repeated field')
 				new_fields.append(field)
-			else: # Handle repeated records.
+			else: # Handle repeated records (structs).
 				field['table_name'] = table + u'.' + field['name']
-				print(field['table_name'] + u'- repeated record')
+				#print(field['table_name'] + u'- repeated record')
 				fields = field['fields']
 				new_fields += parse_table_schema(fields, field['table_name'], [])
 				table = table_name
 	return new_fields
 
 fieldss = parse_table_schema(fields)
+
 #print(json.dumps(fieldss, sort_keys=True, indent=4))
 
 # TODO:
@@ -92,12 +95,45 @@ def sort_fields(fields, table_dict={}):
 	return table_dict
 
 f = sort_fields(fieldss)
-print(json.dumps(f, sort_keys=True, indent=4))
+#print(json.dumps(f, sort_keys=True, indent=4))
+test = f.keys()[1]
+test2 = f.items()
+ttable = test2[0]
+#tfields = ttable[1]['fields']
+#tf1 = tfields[0]
+#print(tf1['name'])
 
-		
-#
-#
-#
+def sql_from(table):
+	"""Write a sql from statement from a provided table name."""
+	table_name = table[0]
+	tables = table_name.split(".")
+	from_clause = "from `{}.{}.{}` as a".format(PROJECT_NAME,DATASET_NAME,tables[0])
+	n = 1
+	for table in tables[1:]:
+		alias = ascii_lowercase[n]
+		unnest = ", unnest({}) as {}".format(table,alias)
+		from_clause += unnest
+		n += 1
+	return from_clause
+
+#print(sql_from(test))
+
+def  sql_select(table):
+	"""Write a sql select statement from a list of fields."""
+	fields = table[1]['fields']
+	select_clause = "select {}".format(primary_key)
+	table_alias = ascii_lowercase[len(table[0].split(".")) -1]
+	field_alias_prefix = table[0].split(".",1)
+	field_alias_prefix = field_alias_prefix[1].replace(".","_")
+	for f in fields:
+		field = table_alias + "." + f['name']
+		field_alias = field_alias_prefix + "_" + f['name']
+		field_clause = ", {} as {}".format(field,field_alias)
+		select_clause += field_clause
+	return select_clause
+
+print(sql_select(ttable) + " " + sql_from(ttable))
+
 #		# Do not assign table name to primary_key
 #		if field_name is primary_key:
 #			pass
