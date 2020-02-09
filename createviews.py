@@ -1,14 +1,19 @@
 #!/usr/bin/env python
 """
-GOAL: This module takes a nested BigQuery table and creates an individual 
-table individual tables for the different levels of nesting. Specifically, 
-it accesses a designated BQ table via user-provided table info and 
-GCP project credentials. Then it parses table schema, writes a SQL query
-to flatten the table, and executes a DDL statement to create a view for the 
-flattened table.
+GOAL: This module takes a nested BigQuery table, unnests it, and
+creates individual views for each table. The root table primary key
+is a field in each table, so the relationship between tables is
+preserved. Specifically, this program accesses a designated BQ table
+via user-provided table info and GCP project credentials. Then it 
+recursively parses table schema, writes a SQL query to flatten the 
+table, and executes a DDL statement to create a view for the flattened 
+table.
 
-Dear Recurse Reader: This program is a work in process. There are still a number
-of edge cases it doesn't account for. 
+CONTEXT: Nested tables present a challenge for traditional data profiling
+tools that only accept flat tables. Writing queries by hand to unnest
+tables for profiling is time consuming and dull. This program attempts
+to free the BigQuery data engineer from this pain.
+
 
 
 """
@@ -23,19 +28,19 @@ from google.cloud.bigquery.schema import SchemaField
 # HINT: use os.walk to search from User level down or Desktop down. 
 
 # Set credentials
-# NOTE: must be changed by user to reflect correct file path.
-os.environ['GOOGLE_APPLICATION_CREDENTIALS']="/Users/charliepatterson/Documents/\
-mhi_programs/bq-create-views-repo/service_account/service_account.json"
+# NOTE: must be changed by user to reflect correct file path. (Not needed when run in Cloud Shell.)
+# os.environ['GOOGLE_APPLICATION_CREDENTIALS']="/Users/charliepatterson/Documents/\
+# mhi_programs/bq-create-views-repo/service_account/service_account.json"
 
 # Connect to a BigQuery project.
 # NOTE: must be changed by user to reflect correct project.
-PROJECT_NAME = 'cool-academy-217719'
+PROJECT_NAME = 'recurse-dev'
 client = bigquery.Client(project=PROJECT_NAME)
 
 # Connect to a BigQuery dataset.
 # NOTE: must be changed by user to reflect correct dataset.
 DATASET_NAME = 'create_views_test'
-dataset_ref = client.dataset(DATASET_NAME) # TODO: store dataset name in variable.
+dataset_ref = client.dataset(DATASET_NAME)
 
 # Get schema for a table and pass list into a variable.
 # NOTE: must be changed by user to reflect correct nested table.
@@ -59,7 +64,8 @@ def schema_to_dict(table_schema):
 		fields.append(field_dict)
 	return fields
 
-fields = schema_to_dict(table_schema)
+# For Debugging pursposes
+#fields = schema_to_dict(table_schema)
 #print(json.dumps(fields, sort_keys=True, indent=4))
 
 def trim_table_name(table_name):
@@ -71,46 +77,33 @@ def trim_table_name(table_name):
 		return '.'.join(table_list)
 
 def parse_table_schema(fields, table=table_name, new_fields=[]):
-	"""Add a table name that preserves parentage for each field."""
+	"""Add a table name that preserves table parentage for each field."""
 	for field in fields:
 		if field['name'] == primary_key: # Don't add table name to primary_key
 			pass
 		if field['mode'] != u'REPEATED' and field['type'] == u'RECORD': # Handle nullable records (structs)
 			field['table_name'] = table + u'.' + field['name'] + u'(nullable_record)'
-			#print(field['table_name'] + u'.' + field['name'])
 			fields = field['fields']
 			new_fields += parse_table_schema(fields, field['table_name'], [])
-			#print('Recursion Over' + u' at ' + field['table_name'])
 			table = trim_table_name(field['table_name'])
-			#print(table)
 		elif field['mode'] != u'REPEATED': # Handle nullable fields
 			field['table_name'] = table
-			#print(field['table_name'] + field['name'])
 			new_fields.append(field)
 		else:
 			if field['type'] != u'RECORD' and field['mode'] == u'REPEATED': # Handle repeated fields (arrays)
-				#field['table_name'] = table + u'.' + field['name']
 				field['table_name'] = table
-				#print(field['table_name'] + u'.' + field['name'])
 				new_fields.append(field)
 			else: # Handle repeated records (structs)
 				field['table_name'] = table + u'.' + field['name']
-				#print(field['table_name'] + u'.' + field['name'])
 				fields = field['fields']
 				new_fields += parse_table_schema(fields, field['table_name'], [])
-				#print('Recursion Over' + u' at ' + field['table_name'])
 				table = trim_table_name(field['table_name'])
-				#print(table)
 	return new_fields
 
-fieldss = parse_table_schema(fields)
-
-# What do I do with arrays?
-# for now just use array_length(name) as name_count
-
+# For Debugging pursposes
+#fieldss = parse_table_schema(fields)
 #print(json.dumps(fieldss, sort_keys=True, indent=4))
 
-# TODO:
 def sort_fields(fields, table_dict={}):
 	"""Sort fields into queries that will become unique views."""
 	for field in fields:
@@ -121,7 +114,8 @@ def sort_fields(fields, table_dict={}):
 			table_dict[field['table_name']]['fields'].append(field)
 	return table_dict
 
-f = sort_fields(fieldss)
+# For Debugging pursposes
+#f = sort_fields(fieldss)
 #print(json.dumps(f, sort_keys=True, indent=4))
 #test = f.keys()
 #print(test)
@@ -155,6 +149,7 @@ def sql_from(table):
 		n += 1
 	return from_clause
 
+# For Debugging pursposes
 #print(sql_from(test))
 
 def  sql_select(table):
@@ -162,31 +157,21 @@ def  sql_select(table):
 	fields = table[1]['fields']
 	select_clause = "select {}".format(primary_key)
 	tables = table[0].split(".")
-	#print(tables)
 	nullable_record_flag = bool(re.search('nullable_record',table[0]))
 	# Find table alias (exclude nullable records because they aren't unnested in from clause)
 	tables_count = len([t for t in tables if bool(re.search('nullable_record',t)) is False])
 	table_alias = ascii_lowercase[tables_count -1]
 	# Build full table path to be used when selecting fields
 	table_reference_path = [t for t in tables if bool(re.search('nullable_record',t)) is True]
-	#print(table_reference_path)
 	table_reference_path = [re.sub('\(nullable_record\)','',t) for t in table_reference_path]
-	#print(table_reference_path)
 	table_reference_path = '.'.join(table_reference_path)
-	#print(table_reference_path)
-	# This is where my problem is...I'm only referring to the nullabe record in my 
-	#nullable_record_name = re.sub('\(nullable_record\)','',tables[-1])
-	#print(nullable_record_name)
-	#print('nullable_record_name:'+ nullable_record_name)
-	# Fields in nullable records must reference the record name
+	# Fields in nullable records must use table_reference_path
 	if nullable_record_flag is True:
 		table_alias = table_alias +"."+ table_reference_path
-		#print(table_alias)
 	if table_alias is 'a' and nullable_record_flag is False:
 		pass
 	else:	
 		table_name = re.sub('\(nullable_record\)','',table[0])
-		#print(table_name)
 		field_alias_prefix = table_name.split(".",1)
 		field_alias_prefix = field_alias_prefix[1].replace(".","_")
 	for f in fields:
@@ -206,10 +191,10 @@ def  sql_select(table):
 			select_clause += field_clause
 	return select_clause
 
+# For Debugging pursposes
 #print(sql_from(ttable))
 #print(sql_select(ttable) + " " + sql_from(ttable))
 
-# This function tables 
 def sql_query(table_dict):
 	"""Write sql queries for all my nested tables."""
 	queries = {}
@@ -218,7 +203,8 @@ def sql_query(table_dict):
 		queries.update({table[0]:sql_query})
 	return queries
 
-tq = sql_query(f)
+# For Debugging pursposes
+#tq = sql_query(f)
 #print(tq)
 #for q in tq.items():
 #	print(q[0])
@@ -227,17 +213,18 @@ tq = sql_query(f)
 def create_views(queries):
 	"""Create views for queries in the provided project and dataset."""
 	for query in queries.items():
-		#print(query[0])
 		print(query[1])
 		table_name = re.sub('\(nullable_record\)','',query[0])
-		#view_name = "vw_" + query[0].replace('.',"_")
 		view_name = "vw_" + table_name.replace('.',"_")
 		view_ref = dataset_ref.table(view_name)
 		view = bigquery.Table(view_ref)
 		view.view_query = query[1]
 		view = client.create_table(view)
 		print("Successfully created view at {}".format(view.full_table_id))
-		#view_query = "create or replace {} as {};".format(view_name,query[1])
-		#client.query(view_query)
 	return
-create_views(tq)
+
+# For Debugging pursposes
+#create_views(tq)
+
+# Run on give table
+create_views(sql_query(sort_fields(parse_table_schema(schema_to_dict(table_schema)))))
