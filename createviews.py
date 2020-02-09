@@ -1,9 +1,15 @@
 #!/usr/bin/env python
 """
-GOAL: This module creates views from nested tables in GCP BigQuery.
-It accesses a designated BQ table via user-provided table info and 
-GCP project credentials, parses table schema, writes a SQL query
-to flatten the table, executes the query in BQ, then saves the view.
+GOAL: This module takes a nested BigQuery table and creates an individual 
+table individual tables for the different levels of nesting. Specifically, 
+it accesses a designated BQ table via user-provided table info and 
+GCP project credentials. Then it parses table schema, writes a SQL query
+to flatten the table, and executes a DDL statement to create a view for the 
+flattened table.
+
+Dear Recurse Reader: This program is a work in process. There are still a number
+of edge cases it doesn't account for. 
+
 
 """
 
@@ -21,28 +27,32 @@ from google.cloud.bigquery.schema import SchemaField
 os.environ['GOOGLE_APPLICATION_CREDENTIALS']="/Users/charliepatterson/Documents/\
 mhi_programs/bq-create-views-repo/service_account/service_account.json"
 
-# Connect to a project.
+# Connect to a BigQuery project.
+# NOTE: must be changed by user to reflect correct project.
 PROJECT_NAME = 'cool-academy-217719'
 client = bigquery.Client(project=PROJECT_NAME)
 
-# Connect to a dataset.
+# Connect to a BigQuery dataset.
+# NOTE: must be changed by user to reflect correct dataset.
 DATASET_NAME = 'create_views_test'
 dataset_ref = client.dataset(DATASET_NAME) # TODO: store dataset name in variable.
 
 # Get schema for a table and pass list into a variable.
-table_name = 'products'
+# NOTE: must be changed by user to reflect correct nested table.
+table_name = 'ga_sessions_20170801'
 table_ref = dataset_ref.table(table_name)
 table = client.get_table(table_ref)
 table_schema = table.schema
 table_name = table_name.encode()
 
 # Define primary key.
-primary_key = '_id'
+# NOTE: must be changed by user to reflect correct primary key.
+primary_key = 'visitId'
 primary_key = primary_key.encode()
 
 
 def schema_to_dict(table_schema):
-	"""Convert table schema to list of python dicts."""
+	"""Convert BigQuery table schema object to a list of nested Python dictionaries and lists."""
 	fields = []
 	for SchemaField in table_schema:
 		field_dict = SchemaField.to_api_repr()
@@ -52,41 +62,57 @@ def schema_to_dict(table_schema):
 fields = schema_to_dict(table_schema)
 #print(json.dumps(fields, sort_keys=True, indent=4))
 
+def trim_table_name(table_name):
+	table_list = table_name.split(".")
+	if len(table_list) == 1:
+		return '.'.join(table_list)
+	else:
+		table_list.pop()
+		return '.'.join(table_list)
+
 def parse_table_schema(fields, table=table_name, new_fields=[]):
 	"""Add a table name that preserves parentage for each field."""
 	for field in fields:
-		if field['name'] == primary_key: # Don't add table name to primary_key.
+		if field['name'] == primary_key: # Don't add table name to primary_key
 			pass
-		if field['mode'] != u'REPEATED' and field['type'] == u'RECORD': # Handle nullable records (structs).
-			field['table_name'] = table + u'.' + field['name']
-			#print(field['table_name'] + u'- nullable record')
+		if field['mode'] != u'REPEATED' and field['type'] == u'RECORD': # Handle nullable records (structs)
+			field['table_name'] = table + u'.' + field['name'] + u'(nullable_record)'
+			#print(field['table_name'] + u'.' + field['name'])
 			fields = field['fields']
 			new_fields += parse_table_schema(fields, field['table_name'], [])
-			table = table_name
-		elif field['mode'] != u'REPEATED': # Handle nullable fields.
+			#print('Recursion Over' + u' at ' + field['table_name'])
+			table = trim_table_name(field['table_name'])
+			#print(table)
+		elif field['mode'] != u'REPEATED': # Handle nullable fields
 			field['table_name'] = table
-			#print(field['table_name'] + u'- nullable field')
+			#print(field['table_name'] + field['name'])
 			new_fields.append(field)
 		else:
-			if field['type'] != u'RECORD' and field['mode'] == u'REPEATED': # Handle repeated fields (arrays).
-				field['table_name'] = table + u'.' + field['name']
-				#print(field['table_name'] + u'- repeated field')
+			if field['type'] != u'RECORD' and field['mode'] == u'REPEATED': # Handle repeated fields (arrays)
+				#field['table_name'] = table + u'.' + field['name']
+				field['table_name'] = table
+				#print(field['table_name'] + u'.' + field['name'])
 				new_fields.append(field)
-			else: # Handle repeated records (structs).
+			else: # Handle repeated records (structs)
 				field['table_name'] = table + u'.' + field['name']
-				#print(field['table_name'] + u'- repeated record')
+				#print(field['table_name'] + u'.' + field['name'])
 				fields = field['fields']
 				new_fields += parse_table_schema(fields, field['table_name'], [])
-				table = table_name
+				#print('Recursion Over' + u' at ' + field['table_name'])
+				table = trim_table_name(field['table_name'])
+				#print(table)
 	return new_fields
 
 fieldss = parse_table_schema(fields)
+
+# What do I do with arrays?
+# for now just use array_length(name) as name_count
 
 #print(json.dumps(fieldss, sort_keys=True, indent=4))
 
 # TODO:
 def sort_fields(fields, table_dict={}):
-	"""Sort fields into tables."""
+	"""Sort fields into queries that will become unique views."""
 	for field in fields:
 		if field['table_name'] not in table_dict.keys():
 			table_dict.update({field['table_name']:{'fields':[]}})
@@ -97,9 +123,11 @@ def sort_fields(fields, table_dict={}):
 
 f = sort_fields(fieldss)
 #print(json.dumps(f, sort_keys=True, indent=4))
-test = f.keys()[1]
-test2 = f.items()
-ttable = test2[0]
+#test = f.keys()
+#print(test)
+#test2 = f.items()
+#ttable = test2[6]
+#print(ttable)
 #tfields = ttable[1]['fields']
 #tf1 = tfields[0]
 #print(tf1['name'])
@@ -108,11 +136,21 @@ def sql_from(table):
 	"""Write a sql from statement from a provided table name."""
 	table_name = table[0]
 	tables = table_name.split(".")
+	# Nullable records do not need to be unnested in BigQuery
+	tables = [t for t in tables if bool(re.search('nullable_record',t)) is False]
 	from_clause = "from `{}.{}.{}` as a".format(PROJECT_NAME,DATASET_NAME,tables[0])
 	n = 1
+	aliases = []
+	# Handle the unnest clause of the from statement
 	for table in tables[1:]:
 		alias = ascii_lowercase[n]
-		unnest = ", unnest({}) as {}".format(table,alias)
+		aliases.append(alias)
+		if len(aliases) == 1:
+			unnest = ", unnest({}) as {}".format(table,alias)
+		else:
+			# Reference the unnested table that came before
+			reference = aliases[-2]
+			unnest = ", unnest({}.{}) as {}".format(reference,table,alias)
 		from_clause += unnest
 		n += 1
 	return from_clause
@@ -123,27 +161,55 @@ def  sql_select(table):
 	"""Write a sql select statement from a list of fields."""
 	fields = table[1]['fields']
 	select_clause = "select {}".format(primary_key)
-	table_alias = ascii_lowercase[len(table[0].split(".")) -1]
-	if table_alias is 'a':
+	tables = table[0].split(".")
+	#print(tables)
+	nullable_record_flag = bool(re.search('nullable_record',table[0]))
+	# Find table alias (exclude nullable records because they aren't unnested in from clause)
+	tables_count = len([t for t in tables if bool(re.search('nullable_record',t)) is False])
+	table_alias = ascii_lowercase[tables_count -1]
+	# Build full table path to be used when selecting fields
+	table_reference_path = [t for t in tables if bool(re.search('nullable_record',t)) is True]
+	#print(table_reference_path)
+	table_reference_path = [re.sub('\(nullable_record\)','',t) for t in table_reference_path]
+	#print(table_reference_path)
+	table_reference_path = '.'.join(table_reference_path)
+	#print(table_reference_path)
+	# This is where my problem is...I'm only referring to the nullabe record in my 
+	#nullable_record_name = re.sub('\(nullable_record\)','',tables[-1])
+	#print(nullable_record_name)
+	#print('nullable_record_name:'+ nullable_record_name)
+	# Fields in nullable records must reference the record name
+	if nullable_record_flag is True:
+		table_alias = table_alias +"."+ table_reference_path
+		#print(table_alias)
+	if table_alias is 'a' and nullable_record_flag is False:
 		pass
 	else:	
-		field_alias_prefix = table[0].split(".",1)
+		table_name = re.sub('\(nullable_record\)','',table[0])
+		#print(table_name)
+		field_alias_prefix = table_name.split(".",1)
 		field_alias_prefix = field_alias_prefix[1].replace(".","_")
 	for f in fields:
 		if f['name'] == primary_key:
 			pass
 		else:
 			field = table_alias + "." + f['name']
-			if table_alias is 'a':
+			if table_alias is 'a' and nullable_record_flag is False:
 				field_alias = f['name']
 			else:
 				field_alias = field_alias_prefix + "_" + f['name']
-			field_clause = ", {} as {}".format(field,field_alias)
+			if f['mode'] == 'REPEATED':
+				# Count array values instead of creating seperate tables for now
+				field_clause = ", array_length({}) as {}".format(field,field_alias+'_count')
+			else:
+				field_clause = ", {} as {}".format(field,field_alias)
 			select_clause += field_clause
 	return select_clause
 
+#print(sql_from(ttable))
 #print(sql_select(ttable) + " " + sql_from(ttable))
 
+# This function tables 
 def sql_query(table_dict):
 	"""Write sql queries for all my nested tables."""
 	queries = {}
@@ -153,15 +219,19 @@ def sql_query(table_dict):
 	return queries
 
 tq = sql_query(f)
+#print(tq)
 #for q in tq.items():
 #	print(q[0])
+#	print(q[1])
 
-def create_view(queries):
+def create_views(queries):
 	"""Create views for queries in the provided project and dataset."""
 	for query in queries.items():
-		print(query[0])
+		#print(query[0])
 		print(query[1])
-		view_name = "vw_" + query[0].replace('.',"_")
+		table_name = re.sub('\(nullable_record\)','',query[0])
+		#view_name = "vw_" + query[0].replace('.',"_")
+		view_name = "vw_" + table_name.replace('.',"_")
 		view_ref = dataset_ref.table(view_name)
 		view = bigquery.Table(view_ref)
 		view.view_query = query[1]
@@ -170,216 +240,4 @@ def create_view(queries):
 		#view_query = "create or replace {} as {};".format(view_name,query[1])
 		#client.query(view_query)
 	return
-create_view(tq)
-
-
-
-
-# TODO: Save query as view.
-# TODO: Close connection.
-
-
-
-
-#		# Do not assign table name to primary_key
-#		if field_name is primary_key:
-#			pass
-#		# Assign table name to nullable records.
-#		if field_mode != u'REPEATED' and field_type == u'RECORD':
-#			# Check if table as already been assigned.
-#			if not table == '':
-#			# Assign 
-#			else:
-#				table = field_name
-#
-#
-#			# Assign table names to fields that are nullable.
-#		elif field_mode != u'REPEATED':
-#
-#		else:
-#			# Assign table names to repeated, non-record fields.
-#			if field['type'] != u'RECORD':
-#			# Pass repeated record fields back for parsing.
-#			else:
-#
-#
-#
-#
-## Algorithm parses table schema.
-#def parse_table_schema(fields, table='', views=[]):
-#	"""Parse schema, track lineage, and return list of fields."""
-#	
-#	for field in fields:
-#		field_type = field['type']
-#		field_mode = field['mode']
-#		field_name_unicode = field['name']
-#		field_name = field_name_unicode.encode('ascii')
-#		# Take out primary key
-#		if field_name is primary_key:
-#			pass
-#		# Add record fields.
-#		if field_mode != u'REPEATED' and field_type == u'RECORD':
-#			if not table == '':
-#				table = table + '.' + field_name
-#				fields = field['fields']
-#				# Add records flag
-#				for field in fields:
-#					field['record'] = table
-#				views += parse_table_schema(fields, table, [])
-#				table = ''
-#			else:
-#				table = field_name
-#				fields = field['fields']
-#				# Add records flag
-#				for field in fields:
-#					field['record'] = table
-#				views += parse_table_schema(fields, table, [])
-#				table = ''
-#		# Add non-repeated fields.
-#		elif field_mode != u'REPEATED':
-#			view_name = table
-#			field_name = table + '.' + field_name
-#			# Check to if record key exits
-#			try:
-#				record = field['record']
-#			except KeyError:
-#				views.append({
-#					'view_names':view_name, 
-#					'field_name':field_name
-#					})
-#			else:
-#				# prevent record from appearing as view_name
-#				if record in table:
-#					view_name = re.sub(record, '', table)
-#				views.append({
-#					'view_names':view_name, 
-#					'field_name':field_name, 
-#					'record': record
-#					})
-#		else:
-#			# Add repeated non-record fields 
-#			if field['type'] != u'RECORD':
-#				view_name = table
-#				field_name = table + '.' + field_name
-#				method = 'ARRAY_LENGTH({})'.format(field_name)
-#				# Check to if record key exits
-#				try:
-#					record = field['record']
-#				except KeyError:
-#					views.append({
-#						'view_names':view_name, 
-#						'field_name':field_name, 
-#						'method':method
-#						})
-#				else:
-#					# prevent record from appearing as view_name
-#					if record in table:
-#						view_name = re.sub(record, '', table)
-#					views.append({'view_names':view_name, 
-#						'field_name':field_name, 
-#						'method':method, 
-#						'record': record})
-#			# Unpack repeated record fields
-#			else:
-#				if not table == '':
-#					table = table + '.' + field_name
-#					fields = field['fields']
-#					views += parse_table_schema(fields, table, [])
-#					table = ''
-#				else:
-#					table = field_name
-#					fields = field['fields']
-#					views += parse_table_schema(fields, table, [])
-#					table = ''
-#
-#	return views
-#
-#parsed_fields_list = parse_table_schema(fields)
-#print(json.dumps(parsed_fields_list, sort_keys=True, indent=4))
-
-
-## TODO: Determine which views to create.
-#def views_planning(fields):
-#	view_name = []
-#	views = []
-#	for field in fields:
-#		if not '.' in field:
-#			view_name.append(table_name)
-#			views.append({'view':table_name,'field':field})
-#
-#	return views
-#
-#print(views_planning(fields))
-
-
-#def write_select_clause(fields):
-#	"""Format fields for select clause of SQL query."""
-#	select_string = ''
-#	for field in fields:
-#		if '_RECORD' in field:
-#			field = field[:-7]
-#		if 'R_' in field:
-#			field = field.split('R')
-#			field = field[0]
-#		if '.' in field:
-#			alias = re.sub(r'\.', '_', field)
-#			select_string = select_string + field + ' AS ' + alias + ', ' 
-#		else:
-#			select_string = select_string + field + ', '
-#	select_string = select_string[:-2]
-#	
-#	return select_string
-#
-#select = write_select_clause(fields)
-#
-#
-#def write_table_path(project_name, dataset_name, table_name):
-#	bq_table_path = '{0}.{1}.{2}'.format(project_name,
-#		dataset_name,
-#		table_name)
-#	return bq_table_path
-#
-#bq_table_path = write_table_path(project_name, dataset_name, table_name)
-#
-#def write_from_clause(bq_table_path, fields):
-#	# Cycle through fields and find columns to unnest
-#	unnest = []
-#	for field in fields:
-#		if '_RECORD' in field:
-#			pass
-#		elif '.' in field:
-#			index = [pos for pos, char in enumerate(field) if char == '.']
-#			for value in index:
-#				need_unnest = field[:value]
-#				need_unnest = 'UNNEST({})'.format(need_unnest)
-#				unnest.append(need_unnest)
-#	
-#	unnest = sorted(set(unnest))
-#	unnest_string = ''
-#	for field in unnest:
-#		unnest_string = unnest_string + field + ', '
-#	unnest_string = unnest_string[:-2]
-#	
-#	return unnest_string
-#
-#unnest_clause = write_from_clause(bq_table_path, fields)
-#
-#
-## TODO: Algorithm to write SQL query.
-#def assemble_top_level_query(select, bq_table_path, unnest_clause):
-#	"""Write SQL query from clauses."""
-#	if len(unnest_clause) is not 0:
-#		comma = ','
-#	else:
-#		comma = ''
-#
-#	query = 'SELECT {0} FROM `{1}`{2}{3};'.format(
-#		select,
-#		bq_table_path,
-#		comma,
-#		unnest_clause)
-#	
-#	return query
-#
-#query = assemble_top_level_query(select,bq_table_path,unnest_clause)
-#print(query)
+create_views(tq)
