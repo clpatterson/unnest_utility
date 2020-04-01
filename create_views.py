@@ -14,39 +14,41 @@ tools that only accept flat tables. Writing queries by hand to unnest
 tables for profiling is time consuming and dull. This program attempts
 to free the BigQuery data engineer from this pain.
 
-
-
 """
 
-import os,re,json
+import os,re,json, argparse
 from string import ascii_lowercase
 from google.cloud import bigquery
 
-# TODO: Open reserved keyword file and assigning to variable
-with open('/home/recurse_dev/bq-create-views/bigquery_reserved_keywords.txt') as f:
+# Define cli interface
+parser = argparse.ArgumentParser(description="unnest nested bigquery table")
+parser.add_argument("project", help="gcp project where table is stored")
+parser.add_argument("dataset", help="bigquery dataset where table is stored")
+parser.add_argument("table", help="bigquery table to be unnested")
+parser.add_argument("primary_key", help="table primary key")
+args = parser.parse_args()
+
+# Make list of BigQuery reserved keywords globally available
+with open('/home/recurse_dev/bq-create-views/unnest_utility/bigquery_reserved_keywords.txt') as f:
     bq_keywords = f.read().splitlines()
 
-# TODO: return file path of 'service_account.json'file on user system.
-# HINT: use os.walk to search from User level down or Desktop down. 
-
 # Set credentials
+# TODO: This environment variable is something the user should set, if they are not
+# running the program in cloud shell.
 # NOTE: must be changed by user to reflect correct file path. (Not needed when run in Cloud Shell.)
 # os.environ['GOOGLE_APPLICATION_CREDENTIALS']="/Users/charliepatterson/Documents/\
 # mhi_programs/bq-create-views-repo/service_account/service_account.json"
 
 # Connect to a BigQuery project.
-# NOTE: must be changed by user to reflect correct project.
-PROJECT_NAME = 'recurse-dev'
+PROJECT_NAME = args.project
 client = bigquery.Client(project=PROJECT_NAME)
 
 # Connect to a BigQuery dataset.
-# NOTE: must be changed by user to reflect correct dataset.
-DATASET_NAME = 'create_views_test'
+DATASET_NAME = args.dataset
 dataset_ref = client.dataset(DATASET_NAME)
 
 # Get schema for a table and pass list into a variable.
-# NOTE: must be changed by user to reflect correct nested table.
-TABLE_NAME = 'crypto_bitcoin_transactions_2020_03_16_to_20'
+TABLE_NAME = args.table
 table_ref = dataset_ref.table(TABLE_NAME)
 table = client.get_table(table_ref)
 table_schema = table.schema
@@ -54,7 +56,7 @@ table_name = TABLE_NAME.encode()
 
 # Define primary key.
 # NOTE: must be changed by user to reflect correct primary key.
-primary_key = 'hash'
+primary_key = args.primary_key
 primary_key = primary_key.encode()
 
 def schema_to_dict(table_schema):
@@ -166,7 +168,6 @@ def handle_bq_keyword(field_name):
     else:
         pass
     return field_name
-
 
 def  sql_select(table):
 	"""Write a sql select statement to build a table."""
